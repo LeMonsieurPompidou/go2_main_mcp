@@ -184,6 +184,38 @@ rehearse with the robots separated before positioning them close together.
 Any rejected SDK call aborts the routine without retrying the movement;
 neutral-pose and stop failures are reported rather than hidden.
 
+#### Diagnose accepted commands without visible movement
+
+After reconnecting the robot and configuring the USB adapter, run one short
+diagnostic before attempting the full presentation:
+
+```powershell
+& .\scripts\Start-Go2Performance.ps1 -ClearanceCm 10 -Diagnostic
+```
+
+With the default four-second period, this runs 16 seconds of nodding after
+the usual countdown and standing preparation. Each update sends `Euler`
+followed by `BalanceStand`, matching
+[Unitree's standing-attitude example](https://support.unitree.com/home/en/developer/Motion_Services_Interface_V2.0).
+The change still needs physical verification on the connected robot.
+
+Both diagnostic and normal runs now require fresh `rt/sportmodestate`
+telemetry before movement. The diagnostic prints commanded pitch, measured
+IMU pitch and robot mode every second; normal runs print this every 15 seconds.
+After two nod periods, a moving window checks for sufficient measured pitch
+variation correlated with the commanded motion, allowing for response lag.
+Accepted commands without a measurable response abort with an explicit error.
+Stale telemetry, damping mode, or a measured change exceeding three degrees
+from the initial pitch also aborts. Commanded pitch and clearance limits are
+unchanged. These checks measure attitude, not distance to the other robot.
+
+Each live launch saves a transcript in `.runtime/performance-YYYYMMDD-HHMMSS.log`.
+Preview the diagnostic without connecting or moving:
+
+```powershell
+& .\scripts\Start-Go2Performance.ps1 -ClearanceCm 10 -Diagnostic -DryRun
+```
+
 On a native Linux installation with the Unitree SDK already installed:
 
 ```bash

@@ -5,7 +5,8 @@ param(
     [double]$PitchDegrees = 1.5,
     [double]$PeriodSeconds = 4,
     [double]$DurationSeconds = 180,
-    [switch]$DryRun
+    [switch]$DryRun,
+    [switch]$Diagnostic
 )
 
 $ErrorActionPreference = 'Stop'
@@ -17,6 +18,7 @@ $go2Arguments = @(
     '--period', $PeriodSeconds.ToString($go2Culture),
     '--duration', $DurationSeconds.ToString($go2Culture)
 )
+if ($Diagnostic) { $go2Arguments += '--diagnostic' }
 
 if ($DryRun) {
     Push-Location $go2Repository
@@ -32,9 +34,16 @@ if ($DryRun) {
 $go2Launcher = Join-Path $PSScriptRoot 'run-wsl-performance.sh'
 $go2LinuxLauncher = (& wsl.exe -d Ubuntu-24.04 --exec wslpath -a $go2Launcher).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Unable to resolve the WSL launcher path' }
-& wsl.exe -d Ubuntu-24.04 -u root --exec /bin/sh $go2LinuxLauncher @go2Arguments
-if ($LASTEXITCODE -eq 130) {
-    Write-Output 'Performance cancelled.'
-} elseif ($LASTEXITCODE -ne 0) {
-    throw "Performance exited with code $LASTEXITCODE. Check the SDK result above."
+$go2LogDirectory = Join-Path $go2Repository '.runtime'
+New-Item -ItemType Directory -Path $go2LogDirectory -Force | Out-Null
+$go2LogPath = Join-Path $go2LogDirectory ("performance-" + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log')
+Start-Transcript -Path $go2LogPath | Out-Null
+try {
+    Write-Output "Test log: $go2LogPath"
+    & wsl.exe -d Ubuntu-24.04 -u root --exec /bin/sh $go2LinuxLauncher @go2Arguments
+    if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 130) {
+        throw "Performance exited with code $LASTEXITCODE. Check the SDK result above."
+    }
+} finally {
+    Stop-Transcript | Out-Null
 }

@@ -94,6 +94,8 @@ def run(
     *,
     clock: Callable[[], float] = time.monotonic,
     report: Callable[[str], None] = print,
+    feedback=None,
+    progress_interval: float = 15.0,
 ) -> str:
     """Execute once; never retry a rejected motion or issue locomotion commands.
 
@@ -115,6 +117,8 @@ def run(
         if cancelled.is_set():
             return "cancelled"
         require_success(sport.Euler(0.0, 0.0, 0.0), "neutral pose")
+        if feedback is not None:
+            feedback.arm()
 
         started = clock()
         progress_at = 0.0
@@ -122,11 +126,22 @@ def run(
         while not cancelled.is_set():
             elapsed = clock() - started
             if elapsed >= plan.duration:
+                if feedback is not None:
+                    feedback.finish()
                 return "completed"
-            require_success(sport.Euler(0.0, plan.pitch_at(elapsed), 0.0), "pitch update")
+            if feedback is not None:
+                feedback.latest()  # Do not send more motion using stale telemetry.
+            pitch = plan.pitch_at(elapsed)
+            require_success(sport.Euler(0.0, pitch, 0.0), "pitch update")
+            # Unitree's standing-attitude example applies BalanceStand after
+            # every Euler setpoint, not just once at startup.
+            require_success(sport.BalanceStand(), "apply standing pitch")
+            if feedback is not None:
+                feedback.observe(elapsed, pitch)
             if elapsed >= progress_at:
-                report(f"Performance: {elapsed:.0f}/{plan.duration:.0f} seconds")
-                progress_at += 15
+                detail = f" | {feedback.status()}" if feedback is not None else ""
+                report(f"Performance: {elapsed:.0f}/{plan.duration:.0f} seconds{detail}")
+                progress_at += progress_interval
             remaining = plan.duration - (clock() - started)
             if remaining > 0:
                 cancelled.wait(min(plan.SAMPLE_INTERVAL, remaining))

@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 
 from go2_performance.__main__ import main
 from go2_performance.routine import PerformanceError, Plan, run
+from go2_performance.feedback import PitchFeedback
 
 
 class VirtualTime:
@@ -60,6 +61,10 @@ class PerformanceTests(unittest.TestCase):
         sport.StopMove.assert_called_once()
         sport.Move.assert_not_called()
         sport.SwitchJoystick.assert_not_called()
+        calls = sport.mock_calls
+        for index, call in enumerate(calls):
+            if call[0] == 'Euler' and call.args[1] != 0:
+                self.assertEqual(calls[index + 1][0], 'BalanceStand')
 
     def test_clearance_reduces_amplitude_and_preserves_reserve(self):
         normal = Plan(clearance_cm=10)
@@ -118,6 +123,89 @@ class PerformanceTests(unittest.TestCase):
         sport.BalanceStand.assert_not_called()
         sport.Euler.assert_not_called()
         sport.StopMove.assert_called_once()
+
+    def test_balance_apply_failure_aborts_and_stops(self):
+        timer = VirtualTime()
+        sport = self.sport(timer)
+        sport.BalanceStand.side_effect = [0, -1]
+        with self.assertRaisesRegex(PerformanceError, 'apply standing pitch'):
+            run(sport, Plan(), timer, clock=timer.clock, report=lambda message: None)
+        self.assertEqual(sport.BalanceStand.call_count, 2)
+        sport.StopMove.assert_called_once()
+
+    def test_accepted_commands_with_no_measured_motion_abort(self):
+        timer = VirtualTime()
+        plan = Plan(duration=16)
+        feedback = PitchFeedback(plan, clock=timer.clock)
+        sport = self.sport(timer)
+        sport.Euler.side_effect = lambda *angles: feedback.update(0, 1) or 0
+        with self.assertRaisesRegex(PerformanceError, 'no sufficient physical pitch response'):
+            run(sport, plan, timer, clock=timer.clock, report=lambda message: None, feedback=feedback)
+        self.assertLess(timer.now, 14)
+        self.assertEqual(sport.Euler.call_args.args, (0.0, 0.0, 0.0))
+        sport.StopMove.assert_called_once()
+
+    def test_measured_response_completes_short_diagnostic(self):
+        timer = VirtualTime()
+        plan = Plan(duration=16)
+        feedback = PitchFeedback(plan, clock=timer.clock)
+        sport = self.sport(timer)
+        sport.Euler.side_effect = lambda roll, pitch, yaw: feedback.update(pitch * 0.9, 1) or 0
+        result = run(sport, plan, timer, clock=timer.clock, report=lambda message: None, feedback=feedback)
+        self.assertEqual(result, 'completed')
+        self.assertTrue(feedback.confirmed)
+
+    def test_stale_or_damping_telemetry_is_rejected(self):
+        timer = VirtualTime()
+        feedback = PitchFeedback(Plan(), clock=timer.clock)
+        feedback.update(0, 1)
+        timer.now = 2
+        with self.assertRaisesRegex(PerformanceError, 'stale'):
+            feedback.latest()
+        feedback.update(0, 7)
+        with self.assertRaisesRegex(PerformanceError, 'damping'):
+            feedback.latest()
+
+    def test_motion_loss_after_initial_response_is_detected(self):
+        timer = VirtualTime()
+        plan = Plan()
+        feedback = PitchFeedback(plan, clock=timer.clock)
+        feedback.update(0, 1)
+        feedback.arm()
+        with self.assertRaisesRegex(PerformanceError, 'no sufficient physical pitch response'):
+            for index in range(200):
+                timer.now = index / 10
+                command = plan.pitch_at(timer.now)
+                feedback.update(command if timer.now < 9 else 0, 1)
+                feedback.observe(timer.now, command)
+        self.assertTrue(feedback.confirmed)  # Initial movement was verified first.
+        self.assertLess(timer.now, 19)
+
+    def test_unrelated_pitch_variation_is_not_accepted_as_tracking(self):
+        timer = VirtualTime()
+        plan = Plan()
+        feedback = PitchFeedback(plan, clock=timer.clock)
+        feedback.update(0, 1)
+        feedback.arm()
+        with self.assertRaisesRegex(PerformanceError, 'no sufficient physical pitch response'):
+            for index in range(100):
+                timer.now = index / 10
+                feedback.update(plan.amplitude * (-1 if index % 2 else 1), 1)
+                feedback.observe(timer.now, plan.pitch_at(timer.now))
+
+    def test_excessive_measured_pitch_stops_test(self):
+        timer = VirtualTime()
+        feedback = PitchFeedback(Plan(), clock=timer.clock)
+        feedback.update(0, 1)
+        feedback.arm()
+        feedback.update(math.radians(4), 1)
+        with self.assertRaisesRegex(PerformanceError, 'more than 3 degrees'):
+            feedback.observe(1, 0)
+
+    def test_offline_diagnostic_is_short_and_does_not_load_sdk(self):
+        with patch.dict(sys.modules, {'unitree_sdk2py': None}), contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(main(['--diagnostic', '--dry-run']), 0)
+        self.assertIn('"duration_seconds": 16', output.getvalue())
 
     def test_cleanup_failure_is_not_reported_as_success(self):
         timer = VirtualTime()
