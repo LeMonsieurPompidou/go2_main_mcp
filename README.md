@@ -2,6 +2,11 @@
 
 A reusable interface layer for the Unitree Go2 quadruped robot. A ZeroMQ bridge process sits between the Unitree SDK and any number of clients, providing a clean JSON protocol for actions, movement, and camera streaming.
 
+This independent repository preserves the history of
+[gfadini/go2_main_mcp](https://github.com/gfadini/go2_main_mcp) and its source
+project, [zhaw-physical-ai/go2_main](https://github.com/zhaw-physical-ai/go2_main),
+with additional Windows/WSL connectivity fixes and web controller diagnostics.
+
 ## Architecture
 
 ```
@@ -63,6 +68,65 @@ docker run --network host --env-file .env -it go2 bash        # shell
 `--network host` is required — the bridge needs direct access to the host's network interface for DDS multicast discovery. With host networking, the bridge/webapp/CLI/MCP all share the host's loopback even when run as separate containers, so the defaults (`GO2_BRIDGE_HOST=localhost`) work unmodified.
 
 The image builds CycloneDDS and the Unitree SDK from source (neither ships PyPI wheels) — see `Dockerfile` and `entrypoint.sh`.
+
+On Docker Desktop, a web app using `-p 8081:8080` has its own network
+namespace. To reach a bridge running with `--network host`, use the Docker
+bridge gateway as `GO2_BRIDGE_HOST`. `host.docker.internal` points to the
+Windows/macOS host and may not reach the bridge inside Docker's Linux VM.
+For example, in PowerShell (after enabling Docker Desktop host networking):
+
+```powershell
+$go2Gateway = docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}'
+docker run --env-file .env -e "GO2_BRIDGE_HOST=$go2Gateway" -p 8081:8080 go2 webapp
+```
+
+Open http://localhost:8081. A successful `status: ok` confirms the web app
+can reach the bridge; `Camera live` appears only when camera frames arrive.
+The robot itself must still be reachable over DDS from the bridge's network.
+
+Docker Desktop's host networking does not expose the Windows physical network
+interfaces inside the Linux VM. The SDK bridge must run in an environment with
+access to the robot's network (for example, a native Linux host connected to
+the robot, or Ubuntu WSL with mirrored networking). See [Docker's host networking limitations](https://docs.docker.com/engine/network/drivers/host/#limitations)
+and [WSL mirrored networking](https://learn.microsoft.com/windows/wsl/networking#mirrored-mode-networking).
+For this PC's directly connected ASIX adapter, `scripts/Set-Go2Ethernet.ps1`
+configures `Ethernet 2` as `192.168.123.100/24` for the current session when run
+from an Administrator PowerShell. The script includes commands to restore DHCP.
+
+### This Windows PC: WSL bridge and Docker web app
+
+The verified robot address is `192.168.123.161`. Ubuntu-24.04 mirrors the ASIX
+USB Ethernet adapter as `eth3`. The bridge runs there with
+`GO2_NETWORK_INTERFACE=eth3` and `GO2_NETWORK_ADDRESS=192.168.123.100`.
+`scripts/Set-Go2DdsFirewall.ps1` adds Windows/WSL inbound UDP rules restricted
+to that robot address; it includes commands to undo them.
+
+The prepared runtime is at `/var/lib/go2-bridge-runtime/rootfs` inside Ubuntu.
+It contains the tested `go2:bridge-fixed` image's existing Python, SDK and
+dependencies, exported into a filesystem and run with `chroot` on WSL's native
+network. The launcher drops the bridge to UID/GID 1000 after mounting `/dev`
+and `/proc`. No second Docker daemon is required inside Ubuntu.
+
+After restarting Windows or WSL, configure Ethernet 2 with the administrator
+script above, then start the bridge from this repository in PowerShell:
+
+```powershell
+& .\scripts\Start-Go2WslBridge.ps1
+```
+
+The hidden `wsl.exe` process keeps the bridge attached to WSL. A background
+systemd service alone does not keep the WSL instance running. Bridge logs are
+saved to `.runtime/bridge.stderr.log` and `.runtime/bridge.stdout.log`.
+To stop the bridge gracefully:
+
+```powershell
+wsl -d Ubuntu-24.04 -u root --exec pkill -TERM -f '^/usr/local/bin/python -m go2_bridge$'
+```
+
+The `go2-webapp-fixed` Docker container uses
+`GO2_BRIDGE_HOST=host.docker.internal` to reach this WSL bridge and publishes
+the controller at http://localhost:8081. Keep a single bridge running.
+`eno1` in the Linux examples below is a placeholder, not this PC's interface.
 
 ### Option B: Bare Metal
 

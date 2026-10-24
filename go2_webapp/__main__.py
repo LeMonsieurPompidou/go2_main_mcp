@@ -45,25 +45,48 @@ async def bridge_command(cmd: str, params: dict | None = None) -> dict:
     """Send a command to the bridge and return the response."""
     ctx = get_zmq_ctx()
     sock = ctx.socket(zmq.REQ)
+    # Never retain queued robot commands after a timeout or cancelled request.
+    sock.setsockopt(zmq.LINGER, 0)
+    sock.setsockopt(zmq.SNDTIMEO, 5000)
     sock.setsockopt(zmq.RCVTIMEO, 5000)
-    sock.connect(f"tcp://{BRIDGE_HOST}:{CMD_PORT}")
-    msg: dict = {"cmd": cmd}
-    if params:
-        msg["params"] = params
-    await sock.send(json.dumps(msg).encode())
-    raw = await sock.recv()
-    sock.close()
-    return json.loads(raw)
+    try:
+        sock.connect(f"tcp://{BRIDGE_HOST}:{CMD_PORT}")
+        msg: dict = {"cmd": cmd}
+        if params:
+            msg["params"] = params
+        await sock.send(json.dumps(msg).encode())
+        raw = await sock.recv()
+        response = json.loads(raw)
+        if not isinstance(response, dict) or not isinstance(response.get("ok"), bool) or not isinstance(response.get("msg"), str):
+            raise ValueError("Invalid bridge response")
+        return response
+    finally:
+        sock.close(linger=0)
 
 
 # ── REST endpoint ─────────────────────────────────────────────────
 
 @app.post("/api/command")
 async def api_command(request: Request):
-    body = await request.json()
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse(status_code=400, content={"ok": False, "msg": "Invalid JSON request", "data": None})
+    if not isinstance(body, dict) or not isinstance(body.get("cmd"), str) or not body["cmd"].strip() or (body.get("params") is not None and not isinstance(body["params"], dict)):
+        return JSONResponse(status_code=400, content={"ok": False, "msg": "Expected a command string and optional params object", "data": None})
     cmd = body.get("cmd", "")
     params = body.get("params")
-    resp = await bridge_command(cmd, params)
+    try:
+        resp = await bridge_command(cmd, params)
+    except zmq.Again:
+        log.warning("Bridge command %s timed out at tcp://%s:%d", cmd, BRIDGE_HOST, CMD_PORT)
+        return JSONResponse(status_code=504, content={"ok": False, "msg": "Bridge timed out. Check that the bridge is running and GO2_BRIDGE_HOST is reachable.", "data": None})
+    except zmq.ZMQError:
+        log.exception("Bridge connection failed")
+        return JSONResponse(status_code=503, content={"ok": False, "msg": "Bridge connection failed", "data": None})
+    except ValueError:
+        log.exception("Invalid bridge response")
+        return JSONResponse(status_code=502, content={"ok": False, "msg": "Invalid response from bridge", "data": None})
     return JSONResponse(content=resp)
 
 

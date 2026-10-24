@@ -35,7 +35,16 @@ async function sendCmd(cmd, params) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    const data = await resp.json();
+    const text = await resp.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(`${cmd}: server returned HTTP ${resp.status} without a valid JSON response`);
+    }
+    if (!resp.ok || !data || data.ok !== true) {
+      throw new Error(`${cmd}: ${data?.msg || `HTTP ${resp.status}`}`);
+    }
     log(`${cmd}: ${data.msg}`);
     return data;
   } catch (err) {
@@ -48,6 +57,14 @@ async function sendCmd(cmd, params) {
 
 let cameraWs = null;
 let blobUrl = null;
+let cameraFrameTimer = null;
+
+function showNoCameraFeed() {
+  connStatus.textContent = "No camera frames";
+  connStatus.style.color = "#ff9800";
+  cameraImg.style.display = "none";
+  noFeed.style.display = "flex";
+}
 
 function connectCamera() {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
@@ -55,12 +72,15 @@ function connectCamera() {
   cameraWs.binaryType = "arraybuffer";
 
   cameraWs.onopen = () => {
-    connStatus.textContent = "Connected";
-    connStatus.style.color = "#4caf50";
-    log("Camera connected");
+    showNoCameraFeed();
+    log("Camera stream connected — waiting for frames");
   };
 
   cameraWs.onmessage = (ev) => {
+    clearTimeout(cameraFrameTimer);
+    connStatus.textContent = "Camera live";
+    connStatus.style.color = "#4caf50";
+    cameraFrameTimer = setTimeout(showNoCameraFeed, 5000);
     if (blobUrl) URL.revokeObjectURL(blobUrl);
     const blob = new Blob([ev.data], { type: "image/jpeg" });
     blobUrl = URL.createObjectURL(blob);
@@ -70,6 +90,7 @@ function connectCamera() {
   };
 
   cameraWs.onclose = () => {
+    clearTimeout(cameraFrameTimer);
     connStatus.textContent = "Disconnected";
     connStatus.style.color = "#e53935";
     cameraImg.style.display = "none";

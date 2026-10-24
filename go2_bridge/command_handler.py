@@ -85,8 +85,17 @@ class CommandHandler:
         method_name, args, kwargs = entry
         try:
             code = self._robot.execute_action(method_name, args, kwargs)
+            if code != 0:
+                reason = {
+                    3102: "SDK could not send the request; check robot network connectivity",
+                    3104: "robot did not respond before the SDK timeout",
+                }.get(code, "robot rejected the request or the SDK call failed")
+                log.warning("Action %s failed: SDK code %s (%s)", name, code, reason)
+                return make_response(False, f"{name} failed: {reason} (SDK code {code})", {"code": code})
+            log.info("Action %s acknowledged by robot (SDK code %s)", name, code)
             return make_response(True, f"{name} executed", {"code": code})
         except Exception as exc:
+            log.exception("Action %s failed", name)
             return make_response(False, f"{name} failed: {exc}")
 
     def _handle_move(self, params: dict) -> bytes:

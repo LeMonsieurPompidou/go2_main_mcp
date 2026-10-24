@@ -1,0 +1,2 @@
+# Preserve executable shell scripts when this repository is checked out on Windows.
+*.sh text eol=lf
