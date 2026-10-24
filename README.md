@@ -90,14 +90,20 @@ access to the robot's network (for example, a native Linux host connected to
 the robot, or Ubuntu WSL with mirrored networking). See [Docker's host networking limitations](https://docs.docker.com/engine/network/drivers/host/#limitations)
 and [WSL mirrored networking](https://learn.microsoft.com/windows/wsl/networking#mirrored-mode-networking).
 For this PC's directly connected ASIX adapter, `scripts/Set-Go2Ethernet.ps1`
-configures `Ethernet 2` as `192.168.123.100/24` for the current session when run
-from an Administrator PowerShell. The script includes commands to restore DHCP.
+detects the single connected ASIX AX88179 USB Ethernet adapter and configures
+it as `192.168.123.100/24` for the current session when run from an Administrator
+PowerShell. Its Windows alias can change after replacing an adapter (for
+example, `Ethernet 2` to `Ethernet 3`). With multiple connected ASIX adapters,
+select one explicitly with `-AdapterName 'Ethernet 3'`; otherwise setup refuses
+to choose. Setup also updates the robot-specific firewall rule to the selected
+adapter and prints commands to restore DHCP.
 
 ### This Windows PC: WSL bridge and Docker web app
 
 The verified robot address is `192.168.123.161`. Ubuntu-24.04 mirrors the ASIX
-USB Ethernet adapter as `eth3`. The bridge runs there with
-`GO2_NETWORK_INTERFACE=eth3` and `GO2_NETWORK_ADDRESS=192.168.123.100`.
+USB Ethernet adapter. Both WSL launchers find the interface with
+`192.168.123.100` automatically; neither relies on a fixed `eth3` name.
+An explicit `GO2_NETWORK_INTERFACE` override is validated against that address.
 `scripts/Set-Go2DdsFirewall.ps1` adds Windows/WSL inbound UDP rules restricted
 to that robot address; it includes commands to undo them.
 
@@ -107,7 +113,7 @@ dependencies, exported into a filesystem and run with `chroot` on WSL's native
 network. The launcher drops the bridge to UID/GID 1000 after mounting `/dev`
 and `/proc`. No second Docker daemon is required inside Ubuntu.
 
-After restarting Windows or WSL, configure Ethernet 2 with the administrator
+After restarting Windows or WSL, configure the USB adapter with the administrator
 script above, then start the bridge from this repository in PowerShell:
 
 ```powershell

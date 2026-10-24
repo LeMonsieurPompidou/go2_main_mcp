@@ -4,8 +4,9 @@
 set -eu
 
 go2_rootfs=/var/lib/go2-bridge-runtime/rootfs
-go2_interface=${GO2_NETWORK_INTERFACE:-eth3}
 go2_address=${GO2_NETWORK_ADDRESS:-192.168.123.100}
+go2_script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+. "$go2_script_dir/go2-network.sh"
 
 exec 9>/var/lib/go2-bridge-runtime/bridge.lock
 if ! flock -n 9; then
@@ -17,10 +18,8 @@ if [ ! -x "$go2_rootfs/usr/local/bin/python" ]; then
     echo "Missing exported Go2 runtime at $go2_rootfs" >&2
     exit 1
 fi
-case "$(ip -o -4 addr show dev "$go2_interface")" in
-    *" $go2_address/"*) ;;
-    *) echo "$go2_interface does not have $go2_address; configure the host Ethernet adapter first" >&2; exit 1 ;;
-esac
+go2_interface=$(go2_resolve_interface "$go2_address" "${GO2_NETWORK_INTERFACE:-}")
+echo "Using WSL interface $go2_interface ($go2_address)"
 
 # The runtime needs the native system's devices and process/network metadata.
 mountpoint -q "$go2_rootfs/dev" || mount --bind /dev "$go2_rootfs/dev"

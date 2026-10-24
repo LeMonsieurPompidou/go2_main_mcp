@@ -3,9 +3,9 @@
 set -eu
 
 go2_rootfs=/var/lib/go2-bridge-runtime/rootfs
-go2_interface=${GO2_NETWORK_INTERFACE:-eth3}
 go2_address=${GO2_NETWORK_ADDRESS:-192.168.123.100}
 go2_repository=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+. "$go2_repository/scripts/go2-network.sh"
 
 if [ ! -x "$go2_rootfs/usr/local/bin/python" ]; then
     echo "Missing prepared Go2 runtime at $go2_rootfs" >&2
@@ -18,10 +18,8 @@ if ! flock -n 9; then
     echo 'The bridge or another performance is running. Stop it before starting this routine.' >&2
     exit 1
 fi
-case "$(ip -o -4 addr show dev "$go2_interface")" in
-    *" $go2_address/"*) ;;
-    *) echo "$go2_interface does not have $go2_address; configure Ethernet 2 first" >&2; exit 1 ;;
-esac
+go2_interface=$(go2_resolve_interface "$go2_address" "${GO2_NETWORK_INTERFACE:-}")
+echo "Using WSL interface $go2_interface ($go2_address)"
 
 mountpoint -q "$go2_rootfs/dev" || mount --bind /dev "$go2_rootfs/dev"
 mountpoint -q "$go2_rootfs/proc" || mount -t proc proc "$go2_rootfs/proc"
