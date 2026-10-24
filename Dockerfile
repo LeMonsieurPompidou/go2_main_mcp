@@ -40,11 +40,17 @@ RUN pip install "mcp[cli]"
 
 # Project source.
 COPY . .
+RUN chmod +x entrypoint.sh
 
 # INSTALL.md step 7 — verify installation.
 RUN python -c "from unitree_sdk2py.go2.sport.sport_client import SportClient; print('SDK OK')" \
     && python -c "import zmq, fastapi, uvicorn; print('Bridge deps OK')"
 
-# Drop into a shell; run the bridge/webapp/cli manually once inside.
-# Needs the robot's network reachable, e.g. `docker run --network host -it ...`.
-ENTRYPOINT ["/bin/bash"]
+# Needs the robot's network reachable, e.g.:
+#   docker run --network host --env-file .env go2            # bridge (default)
+#   docker run --network host --env-file .env go2 webapp
+#   docker run --network host --env-file .env go2 mcp
+#   docker run --network host --env-file .env go2 cli status
+#   docker run --network host --env-file .env -it go2 bash
+ENTRYPOINT ["./entrypoint.sh"]
+CMD ["bridge"]
