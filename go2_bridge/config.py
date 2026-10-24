@@ -5,6 +5,12 @@ import os
 
 NETWORK_INTERFACE: str = os.getenv("GO2_NETWORK_INTERFACE", "eno1")
 
+# Only needed when NETWORK_INTERFACE has multiple IPv4 addresses (e.g. a
+# shared test-bench NIC with one address per robot) — CycloneDDS otherwise
+# binds to whichever address it finds first, which may not be the robot's
+# subnet. See go2_bridge/robot.py for how this is applied.
+NETWORK_ADDRESS: str = os.getenv("GO2_NETWORK_ADDRESS", "")
+
 ZMQ_CMD_PORT: int = int(os.getenv("GO2_ZMQ_CMD_PORT", "5555"))
 ZMQ_PUB_PORT: int = int(os.getenv("GO2_ZMQ_PUB_PORT", "5556"))
 

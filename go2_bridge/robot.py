@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 
+from unitree_sdk2py.core import channel as channel_module
 from unitree_sdk2py.core.channel import ChannelFactoryInitialize
 from unitree_sdk2py.go2.sport.sport_client import SportClient
 from unitree_sdk2py.go2.obstacles_avoid.obstacles_avoid_client import (
@@ -16,6 +17,30 @@ from unitree_sdk2py.go2.vui.vui_client import VuiClient
 from . import config
 
 log = logging.getLogger(__name__)
+
+
+def _pin_network_address(address: str) -> None:
+    """Force CycloneDDS to bind to a specific IP instead of NETWORK_INTERFACE.
+
+    The Unitree SDK's config template selects the interface by `name` alone.
+    On a NIC with multiple IPv4 addresses (e.g. a test bench with one address
+    per robot), CycloneDDS picks whichever address it enumerates first — not
+    necessarily the one on the robot's subnet. Selecting by `address` instead
+    disambiguates it (combining name+address confuses CycloneDDS's interface
+    matching: "do not match the same interface"). Patches the template in the
+    `channel` module's namespace (not channel_config's) since that's what
+    ChannelFactory.Init() actually reads at call time.
+    """
+    name_attr = 'name="$__IF_NAME__$" '
+    marker = 'multicast="default"/>'
+    template = channel_module.ChannelConfigHasInterface
+    if name_attr not in template or marker not in template:
+        log.warning("Unexpected SDK config template; cannot pin network address")
+        return
+    channel_module.ChannelConfigHasInterface = template.replace(name_attr, "").replace(
+        marker, f'multicast="default" address="{address}"/>'
+    )
+    log.info("Pinned CycloneDDS to address %s", address)
 
 
 class Robot:
@@ -35,6 +60,8 @@ class Robot:
     def init(self) -> None:
         """Initialise DDS channel and all SDK clients."""
         log.info("Initialising DDS on interface %s", config.NETWORK_INTERFACE)
+        if config.NETWORK_ADDRESS:
+            _pin_network_address(config.NETWORK_ADDRESS)
         ChannelFactoryInitialize(0, config.NETWORK_INTERFACE)
 
         # SportClient

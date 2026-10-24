@@ -44,7 +44,27 @@ Enabled by default. Uses `ObstaclesAvoidClient` for all movement, routing throug
 - Network connection to the Go2 robot
 - ZeroMQ, FastAPI, and uvicorn
 
-### Install Dependencies
+### Option A: Docker (recommended)
+
+```bash
+cp .env.example .env
+# edit GO2_NETWORK_INTERFACE for your machine (and GO2_NETWORK_ADDRESS too,
+# if that interface has more than one IPv4 address — see Configuration below)
+
+docker build -t go2 .
+
+docker run --network host --env-file .env go2                 # bridge (default)
+docker run --network host --env-file .env go2 webapp
+docker run --network host --env-file .env go2 mcp
+docker run --network host --env-file .env --rm go2 cli status
+docker run --network host --env-file .env -it go2 bash        # shell
+```
+
+`--network host` is required — the bridge needs direct access to the host's network interface for DDS multicast discovery. With host networking, the bridge/webapp/CLI/MCP all share the host's loopback even when run as separate containers, so the defaults (`GO2_BRIDGE_HOST=localhost`) work unmodified.
+
+The image builds CycloneDDS and the Unitree SDK from source (neither ships PyPI wheels) — see `Dockerfile` and `entrypoint.sh`.
+
+### Option B: Bare Metal
 
 ```bash
 source go2_py311/bin/activate
@@ -222,6 +242,8 @@ All settings via environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GO2_NETWORK_INTERFACE` | `eno1` | DDS network interface for SDK |
+| `GO2_NETWORK_ADDRESS` | *(unset)* | Pin CycloneDDS to a specific IP on `GO2_NETWORK_INTERFACE`. Only needed if that interface has multiple IPv4 addresses (e.g. a shared test-bench NIC, one per robot) — CycloneDDS otherwise binds to whichever address it enumerates first, which may not be the robot's subnet, and DDS discovery fails silently (every SDK call hangs/times out with no error). |
+| `GO2_ROBOT_IP` | *(unset)* | Reference only, not read by any code — DDS discovery is multicast-based. Handy for `ping`-ing the robot while troubleshooting `GO2_NETWORK_ADDRESS`/`GO2_NETWORK_INTERFACE`. |
 | `GO2_ZMQ_CMD_PORT` | `5555` | REQ/REP command port |
 | `GO2_ZMQ_PUB_PORT` | `5556` | PUB/SUB stream port |
 | `GO2_MOVE_HZ` | `20` | Movement loop rate |
