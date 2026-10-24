@@ -128,6 +128,62 @@ The `go2-webapp-fixed` Docker container uses
 the controller at http://localhost:8081. Keep a single bridge running.
 `eno1` in the Linux examples below is a placeholder, not this PC's interface.
 
+### Autonomous standing nod (three minutes)
+
+`go2_performance` runs a small stationary front-up/front-down nod using
+`SportClient.Euler(0, pitch, 0)`. It does not walk or change whole-body height.
+It uses the same exclusive control lock as the WSL bridge, so stop the bridge
+before launching the performance. Only the moving robot may be connected to
+the adapter's DDS network.
+
+From PowerShell in this repository, preview the plan without loading the SDK
+or connecting to a robot:
+
+```powershell
+& .\scripts\Start-Go2Performance.ps1 -DryRun -ClearanceCm 10
+```
+
+When the setup is ready, this command starts the physical movement in the
+current terminal:
+
+```powershell
+& .\scripts\Start-Go2Performance.ps1 -ClearanceCm 10
+```
+
+There is a five-second countdown, then `StandUp`, five seconds for the robot
+to settle, and `BalanceStand`. The timed performance then runs for 180 seconds
+with a four-second nod period, default maximum pitch of +/-1.5 degrees, and
+smooth two-second fades at the start and finish. Normal completion requests
+neutral pitch and `StopMove`, leaving the robot standing. Joystick settings
+are not changed and no joystick input is needed. This standalone process does
+not expose the web app's STOP button; press **Ctrl+C in its terminal** to
+cancel. Cancellation and cleanup can wait for an in-flight SDK call's
+three-second timeout, so keep the robot's physical stop available.
+
+The 10 cm clearance is the measured smallest gap in the starting standing
+pose. Change it for a different setup, for example:
+
+```powershell
+& .\scripts\Start-Go2Performance.ps1 -ClearanceCm 8 -PitchDegrees 1 -PeriodSeconds 5
+```
+
+The planner reserves 5 cm, assumes torso points are within 75 cm of the pitch
+centre, and reduces the amplitude if the remaining gap requires it. At the
+default +/-1.5 degrees, the modelled point displacement is about 1.96 cm.
+Pitch is always capped at 2 degrees, duration at 180 seconds, and a gap of
+5 cm or less is rejected. This is a planning estimate, not measured collision
+avoidance: balance corrections, body translation, legs and staging geometry
+are not modelled. Keep the **whole initial stand-up transition clear**, and
+rehearse with the robots separated before positioning them close together.
+Any rejected SDK call aborts the routine without retrying the movement;
+neutral-pose and stop failures are reported rather than hidden.
+
+On a native Linux installation with the Unitree SDK already installed:
+
+```bash
+GO2_NETWORK_INTERFACE=eno1 python -m go2_performance --clearance-cm 10
+```
+
 ### Option B: Bare Metal
 
 ```bash
