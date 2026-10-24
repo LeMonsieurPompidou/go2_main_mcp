@@ -1,0 +1,13 @@
+.git
+go2_py311/
+go2_hack/
+unitree_sdk2_python/
+cyclonedds/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+.vscode/
+.idea/
+*.jpg
+*.png
