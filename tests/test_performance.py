@@ -43,7 +43,7 @@ class PerformanceTests(unittest.TestCase):
         client.Euler.side_effect = lambda *angles: 0
         return client
 
-    def test_full_three_minutes_finish_neutral_without_locomotion(self):
+    def test_full_ten_minutes_finish_neutral_without_locomotion(self):
         timer = VirtualTime()
         sport = self.sport(timer)
         updates = []
@@ -51,13 +51,13 @@ class PerformanceTests(unittest.TestCase):
         plan = Plan()
         result = run(sport, plan, timer, clock=timer.clock, report=lambda message: None)
         self.assertEqual(result, 'completed')
-        self.assertAlmostEqual(timer.now, plan.SETTLE_SECONDS + 180, places=6)
+        self.assertAlmostEqual(timer.now, plan.SETTLE_SECONDS + 600, places=6)
         self.assertEqual(updates[-1][1], (0.0, 0.0, 0.0))
         nonzero = [(at, pitch) for at, (_, pitch, _) in updates if pitch]
         self.assertTrue(any(pitch > 0 for _, pitch in nonzero))
         self.assertTrue(any(pitch < 0 for _, pitch in nonzero))
         self.assertTrue(all(abs(pitch) <= math.radians(1.5) for _, pitch in nonzero))
-        self.assertTrue(all(at < plan.SETTLE_SECONDS + 180 for at, _ in nonzero))
+        self.assertTrue(all(at < plan.SETTLE_SECONDS + 600 for at, _ in nonzero))
         sport.StopMove.assert_called_once()
         sport.Move.assert_not_called()
         sport.SwitchJoystick.assert_not_called()
@@ -71,16 +71,16 @@ class PerformanceTests(unittest.TestCase):
         restricted = Plan(clearance_cm=6)
         self.assertLess(restricted.amplitude, normal.amplitude)
         self.assertLessEqual(restricted.displacement_cm + 5, 6 + 1e-9)
-        for index in range(18001):
+        for index in range(60001):
             self.assertLessEqual(abs(restricted.pitch_at(index / 100)), restricted.amplitude)
         self.assertEqual(normal.pitch_at(0), 0)
-        self.assertEqual(normal.pitch_at(180), 0)
+        self.assertEqual(normal.pitch_at(600), 0)
 
     def test_invalid_parameters_are_rejected_before_motion(self):
         for parameters in [
             {'clearance_cm': 5}, {'clearance_cm': 5.01},
             {'pitch_deg': 2.1}, {'pitch_deg': 0},
-            {'duration': 181}, {'duration': -1}, {'period': 0},
+            {'duration': 601}, {'duration': -1}, {'period': 0},
             {'clearance_cm': float('nan')}, {'pitch_deg': float('inf')},
         ]:
             with self.subTest(parameters=parameters), self.assertRaises(ValueError):
@@ -155,6 +155,21 @@ class PerformanceTests(unittest.TestCase):
         self.assertEqual(result, 'completed')
         self.assertTrue(feedback.confirmed)
 
+    def test_feedback_remains_bounded_over_ten_minutes(self):
+        timer = VirtualTime()
+        plan = Plan()
+        feedback = PitchFeedback(plan, clock=timer.clock)
+        feedback.update(0, 1)
+        feedback.arm()
+        for index in range(6001):
+            timer.now = index / 10
+            command = plan.pitch_at(timer.now)
+            feedback.update(command * 0.9, 1)
+            feedback.observe(timer.now, command)
+            self.assertLessEqual(len(feedback.commands), 82)
+        feedback.finish()
+        self.assertTrue(feedback.confirmed)
+
     def test_stale_or_damping_telemetry_is_rejected(self):
         timer = VirtualTime()
         feedback = PitchFeedback(Plan(), clock=timer.clock)
@@ -218,7 +233,7 @@ class PerformanceTests(unittest.TestCase):
         with patch.dict(sys.modules, {'unitree_sdk2py': None}), contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertEqual(main(['--dry-run', '--clearance-cm', '10']), 0)
         self.assertIn('DRY RUN', output.getvalue())
-        self.assertIn('180', output.getvalue())
+        self.assertIn('"duration_seconds": 600', output.getvalue())
 
 
 if __name__ == '__main__':

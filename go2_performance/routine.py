@@ -22,7 +22,7 @@ class SportControl(Protocol):
 
 @dataclass(frozen=True)
 class Plan:
-    duration: float = 180.0
+    duration: float = 600.0
     period: float = 4.0
     pitch_deg: float = 1.5
     clearance_cm: float = 10.0
@@ -31,6 +31,7 @@ class Plan:
     BODY_RADIUS_M = 0.75
     CLEARANCE_RESERVE_M = 0.05
     MAX_PITCH_DEG = 2.0
+    MAX_DURATION_SECONDS = 600
     SAMPLE_INTERVAL = 0.1
     SETTLE_SECONDS = 5.0
 
@@ -38,8 +39,8 @@ class Plan:
         for name in ("duration", "period", "pitch_deg", "clearance_cm"):
             if not math.isfinite(getattr(self, name)):
                 raise ValueError(f"{name} must be finite")
-        if not 1 <= self.duration <= 180:
-            raise ValueError("duration must be between 1 and 180 seconds")
+        if not 1 <= self.duration <= self.MAX_DURATION_SECONDS:
+            raise ValueError("duration must be between 1 and 600 seconds")
         if not 2 <= self.period <= 20:
             raise ValueError("period must be between 2 and 20 seconds")
         if not 0.1 <= self.pitch_deg <= self.MAX_PITCH_DEG:

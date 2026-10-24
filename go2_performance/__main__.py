@@ -17,7 +17,7 @@ from .feedback import PitchFeedback
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--duration", type=float, default=180, help="1-180 seconds (default: 180)")
+    parser.add_argument("--duration", type=float, default=600, help="1-600 seconds (default: 600 / 10 minutes)")
     parser.add_argument("--period", type=float, default=4, help="seconds per nod (default: 4)")
     parser.add_argument("--pitch-deg", type=float, default=1.5, help="maximum tilt; hard limit 2 degrees")
     parser.add_argument("--clearance-cm", type=float, default=10, help="measured minimum gap in the starting standing pose")

@@ -134,7 +134,7 @@ The `go2-webapp-fixed` Docker container uses
 the controller at http://localhost:8081. Keep a single bridge running.
 `eno1` in the Linux examples below is a placeholder, not this PC's interface.
 
-### Autonomous standing nod (three minutes)
+### Autonomous standing nod (ten minutes)
 
 `go2_performance` runs a small stationary front-up/front-down nod using
 `SportClient.Euler(0, pitch, 0)`. It does not walk or change whole-body height.
@@ -157,7 +157,7 @@ current terminal:
 ```
 
 There is a five-second countdown, then `StandUp`, five seconds for the robot
-to settle, and `BalanceStand`. The timed performance then runs for 180 seconds
+to settle, and `BalanceStand`. The timed performance then runs for 600 seconds
 with a four-second nod period, default maximum pitch of +/-1.5 degrees, and
 smooth two-second fades at the start and finish. Normal completion requests
 neutral pitch and `StopMove`, leaving the robot standing. Joystick settings
@@ -176,13 +176,24 @@ pose. Change it for a different setup, for example:
 The planner reserves 5 cm, assumes torso points are within 75 cm of the pitch
 centre, and reduces the amplitude if the remaining gap requires it. At the
 default +/-1.5 degrees, the modelled point displacement is about 1.96 cm.
-Pitch is always capped at 2 degrees, duration at 180 seconds, and a gap of
+Pitch is always capped at 2 degrees, duration at 600 seconds, and a gap of
 5 cm or less is rejected. This is a planning estimate, not measured collision
 avoidance: balance corrections, body translation, legs and staging geometry
 are not modelled. Keep the **whole initial stand-up transition clear**, and
 rehearse with the robots separated before positioning them close together.
 Any rejected SDK call aborts the routine without retrying the movement;
 neutral-pose and stop failures are reported rather than hidden.
+
+The normal default is ten minutes of nodding, in addition to the countdown and
+standing preparation. `-DurationSeconds` can shorten the performance up to
+that ten-minute maximum. `-Diagnostic` remains a short 16-second test at the
+default nod period.
+
+Built-in actions such as `Sit` and `StandUp` are firmware presets whose motion
+amplitude is not exposed by the SDK. This routine uses `StandUp` to prepare
+the robot and parameterized `Euler` pitch commands to construct the nodding
+motion. SDK acknowledgements alone do not establish that the body follows;
+the measured-pitch diagnostic below must be verified on the physical robot.
 
 #### Diagnose accepted commands without visible movement
 

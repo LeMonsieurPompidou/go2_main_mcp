@@ -4,7 +4,7 @@ param(
     [double]$ClearanceCm = 10,
     [double]$PitchDegrees = 1.5,
     [double]$PeriodSeconds = 4,
-    [double]$DurationSeconds = 180,
+    [double]$DurationSeconds = 600,
     [switch]$DryRun,
     [switch]$Diagnostic
 )
