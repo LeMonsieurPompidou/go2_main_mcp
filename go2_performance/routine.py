@@ -26,11 +26,13 @@ class Plan:
     period: float = 4.0
     pitch_deg: float = 1.5
     clearance_cm: float = 10.0
+    separated_test: bool = False
 
     # A planning allowance for torso points, not a measured collision model.
     BODY_RADIUS_M = 0.75
     CLEARANCE_RESERVE_M = 0.05
     MAX_PITCH_DEG = 2.0
+    MAX_SEPARATED_TEST_PITCH_DEG = 15.0
     MAX_DURATION_SECONDS = 600
     SAMPLE_INTERVAL = 0.1
     SETTLE_SECONDS = 5.0
@@ -43,15 +45,18 @@ class Plan:
             raise ValueError("duration must be between 1 and 600 seconds")
         if not 2 <= self.period <= 20:
             raise ValueError("period must be between 2 and 20 seconds")
-        if not 0.1 <= self.pitch_deg <= self.MAX_PITCH_DEG:
-            raise ValueError("pitch must be between 0.1 and 2 degrees")
-        if self.clearance_cm <= self.CLEARANCE_RESERVE_M * 100:
+        maximum = self.MAX_SEPARATED_TEST_PITCH_DEG if self.separated_test else self.MAX_PITCH_DEG
+        if not 0.1 <= self.pitch_deg <= maximum:
+            raise ValueError(f"pitch must be between 0.1 and {maximum:g} degrees for this setup")
+        if not self.separated_test and self.clearance_cm <= self.CLEARANCE_RESERVE_M * 100:
             raise ValueError("clearance must exceed the 5 cm planning reserve")
         if self.amplitude < math.radians(0.1):
             raise ValueError("insufficient clearance for a 0.1 degree nod")
 
     @property
     def amplitude(self) -> float:
+        if self.separated_test:
+            return math.radians(self.pitch_deg)
         available = self.clearance_cm / 100 - self.CLEARANCE_RESERVE_M
         # Bound point displacement by 2*r*sin(angle/2), allowing for either sign.
         ratio = max(0.0, min(1.0, available / (2 * self.BODY_RADIUS_M)))
@@ -61,6 +66,10 @@ class Plan:
     @property
     def displacement_cm(self) -> float:
         return 200 * self.BODY_RADIUS_M * math.sin(self.amplitude / 2)
+
+    @property
+    def measured_pitch_limit_deg(self) -> float:
+        return max(3.0, 1.2 * self.pitch_deg) if self.separated_test else 3.0
 
     def pitch_at(self, elapsed: float) -> float:
         if elapsed <= 0 or elapsed >= self.duration:
@@ -75,9 +84,12 @@ class Plan:
             "duration_seconds": self.duration,
             "period_seconds": self.period,
             "maximum_pitch_degrees": round(math.degrees(self.amplitude), 4),
-            "measured_clearance_cm": self.clearance_cm,
+            "separated_test": self.separated_test,
+            "clearance_limiter_enabled": not self.separated_test,
+            "measured_clearance_cm": None if self.separated_test else self.clearance_cm,
             "modelled_point_displacement_cm": round(self.displacement_cm, 4),
-            "planning_reserve_cm": self.CLEARANCE_RESERVE_M * 100,
+            "planning_reserve_cm": None if self.separated_test else self.CLEARANCE_RESERVE_M * 100,
+            "measured_pitch_stop_degrees": self.measured_pitch_limit_deg,
             "sample_rate_hz": 1 / self.SAMPLE_INTERVAL,
             "stand_settle_seconds": self.SETTLE_SECONDS,
         }

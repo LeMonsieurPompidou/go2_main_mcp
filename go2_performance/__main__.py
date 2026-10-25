@@ -23,7 +23,8 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--duration", type=float, default=600, help="1-600 seconds (default: 600 / 10 minutes)")
     parser.add_argument("--period", type=float, default=4, help="seconds per nod (default: 4)")
-    parser.add_argument("--pitch-deg", type=float, default=1.5, help="maximum tilt; hard limit 2 degrees")
+    parser.add_argument("--pitch-deg", type=float, default=1.5, help="pitch command amplitude; limit 2 degrees, or 15 with --separated-test")
+    parser.add_argument("--separated-test", action="store_true", help="robots separated: bypass clearance limiter and allow pitch commands up to 15 degrees")
     parser.add_argument("--clearance-cm", type=float, default=10, help="measured minimum gap in the starting standing pose")
     parser.add_argument("--interface", default=os.getenv("GO2_NETWORK_INTERFACE", "eno1"))
     parser.add_argument("--address", default=os.getenv("GO2_NETWORK_ADDRESS", ""), help="local adapter IPv4 address, not robot IP")
@@ -32,12 +33,12 @@ def main(argv=None) -> int:
     parser.add_argument("--trace-csv", help="save timestamped commands and measured pitch for diagnosis")
     args = parser.parse_args(argv)
     try:
-        plan = Plan(args.duration, args.period, args.pitch_deg, args.clearance_cm)
+        plan = Plan(args.duration, args.period, args.pitch_deg, args.clearance_cm, args.separated_test)
         if args.diagnostic:
             diagnostic_duration = max(16, 3 * plan.period + 4)
             if plan.duration < diagnostic_duration:
                 raise ValueError(f"diagnostic duration must allow at least {diagnostic_duration:g} seconds")
-            plan = Plan(diagnostic_duration, plan.period, plan.pitch_deg, plan.clearance_cm)
+            plan = Plan(diagnostic_duration, plan.period, plan.pitch_deg, plan.clearance_cm, plan.separated_test)
         if args.address:
             ipaddress.IPv4Address(args.address)
     except ValueError as exc:
@@ -46,7 +47,10 @@ def main(argv=None) -> int:
     print(json.dumps(plan.summary(), indent=2), flush=True)
     if args.diagnostic:
         print("DIAGNOSTIC: short run with measured pitch feedback.", flush=True)
-    print("Clearance is a planning estimate; there is no distance sensor or collision guarantee.", flush=True)
+    if plan.separated_test:
+        print("SEPARATED TEST: clearance limiter disabled; keep the other robot and obstacles out of the motion area.", flush=True)
+    else:
+        print("Clearance is a planning estimate; there is no distance sensor or collision guarantee.", flush=True)
     if args.dry_run:
         print("DRY RUN: no SDK loaded, no robot connection, no movement.", flush=True)
         return 0

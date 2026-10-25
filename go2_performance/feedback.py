@@ -70,8 +70,8 @@ class PitchFeedback:
         reading = self.latest()
         if self.baseline is None:
             raise PerformanceError("Pitch monitor was not armed")
-        if abs(reading.pitch - self.baseline) > math.radians(3):
-            raise PerformanceError("Measured pitch changed by more than 3 degrees; routine stopped")
+        if abs(reading.pitch - self.baseline) > math.radians(self.plan.measured_pitch_limit_deg):
+            raise PerformanceError(f"Measured pitch changed by more than {self.plan.measured_pitch_limit_deg:g} degrees; routine stopped")
         self.last_command = command
         self.last_reading = reading
         self.commands.append(command)
@@ -93,28 +93,39 @@ class PitchFeedback:
             sample_times = sorted(samples)
             values = [samples[at] for at in sample_times]
             observed_span = max(values) - min(values) if values else 0.0
-            minimum_span = max(math.radians(0.05), self.plan.amplitude * 0.5)
+            # Detect actual cyclic movement, without assuming the firmware's
+            # command-to-body gain is 1:1. A recorded run had gain about 0.09.
+            minimum_span = max(math.radians(0.05), min(math.radians(0.15), self.plan.amplitude * 0.5))
             # SDK calls can block: ten samples need not equal one second.
             # Compare actual command/telemetry timestamps with 0-1 s of lag.
             correlations = []
             for step in range(21):
-                aligned_commands, aligned_values = [], []
+                aligned_commands, aligned_values, aligned_times = [], [], []
                 for at in sample_times:
                     index = bisect_right(self.times, at - step * 0.05) - 1
                     if index >= 0:
                         aligned_commands.append(self.commands[index])
                         aligned_values.append(samples[at])
-                correlations.append(self.correlation(aligned_commands, aligned_values))
-            correlation = max(correlations)
+                        aligned_times.append(at)
+                # Settling drift is not evidence of the requested nod cycle.
+                commands = self.detrend(aligned_commands, aligned_times)
+                measured = self.detrend(aligned_values, aligned_times)
+                energy = sum(value * value for value in commands)
+                gain = sum(a * b for a, b in zip(commands, measured)) / energy if energy > 1e-12 else 0.0
+                span = max(measured) - min(measured) if measured else 0.0
+                correlations.append((self.correlation(commands, measured), gain, span))
+            correlation, gain, cyclic_span = max(correlations, key=lambda result: result[0])
+            fitted_span = 2 * abs(gain) * self.plan.amplitude
             coverage = sample_times[-1] - sample_times[0] if sample_times else 0.0
             sufficient_samples = len(values) >= 6 and coverage >= 1.5 * self.plan.period
             self.last_check = (
                 f"range={math.degrees(observed_span):.3f}deg "
                 f"required={math.degrees(minimum_span):.3f}deg "
-                f"correlation={correlation:.2f} samples={len(values)}"
+                f"correlation={correlation:.2f} gain={gain:+.3f} "
+                f"cyclic_range={math.degrees(fitted_span):.3f}deg samples={len(values)}"
             )
             self.check_at = elapsed + self.plan.period / 2
-            if not sufficient_samples or observed_span < minimum_span or correlation < 0.3:
+            if not sufficient_samples or min(cyclic_span, fitted_span) < minimum_span or correlation < 0.6:
                 if not self.confirmed and elapsed < self.startup_deadline:
                     self.last_check = "startup check pending: " + self.last_check
                     return
@@ -124,6 +135,16 @@ class PitchFeedback:
                     "Check robot mode, firmware compatibility and competing remote/app input."
                 )
             self.confirmed = True
+
+    @staticmethod
+    def detrend(values, times):
+        if not values:
+            return []
+        mean_time = sum(times) / len(times)
+        mean_value = sum(values) / len(values)
+        energy = sum((at - mean_time) ** 2 for at in times)
+        slope = sum((at - mean_time) * (value - mean_value) for at, value in zip(times, values)) / energy if energy > 1e-12 else 0.0
+        return [value - mean_value - slope * (at - mean_time) for at, value in zip(times, values)]
 
     @staticmethod
     def correlation(commands, measured) -> float:

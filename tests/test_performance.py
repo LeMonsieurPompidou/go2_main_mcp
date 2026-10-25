@@ -1,11 +1,13 @@
 """No robot is needed: virtual time covers timing, clearance, and failure stops."""
 
 import contextlib
+import csv
 import io
 import math
 import sys
 import unittest
 from unittest.mock import Mock, patch
+from pathlib import Path
 
 from go2_performance.__main__ import main
 from go2_performance.routine import PerformanceError, Plan, run
@@ -208,21 +210,88 @@ class PerformanceTests(unittest.TestCase):
                 feedback.update(plan.amplitude * (-1 if index % 2 else 1), 1)
                 feedback.observe(timer.now, plan.pitch_at(timer.now))
 
-    def test_borderline_range_is_reported_and_not_silently_accepted(self):
+    def test_small_coherent_response_is_not_rejected_for_low_firmware_gain(self):
         timer = VirtualTime()
         plan = Plan()
         feedback = PitchFeedback(plan, clock=timer.clock)
         feedback.update(0, 1)
         feedback.arm()
-        with self.assertRaisesRegex(PerformanceError, r'range=0.735deg required=0.750deg'):
+        for index in range(170):
+            timer.now = index / 10
+            feedback.update(math.radians(0.735 / 2) * math.sin(2 * math.pi * timer.now / 4), 1)
+            feedback.observe(timer.now, plan.pitch_at(timer.now))
+        self.assertTrue(feedback.confirmed)
+        self.assertIn('required=0.150deg', feedback.status())
+
+    def test_recorded_robot_response_is_recognized_as_cyclic_motion(self):
+        timer = VirtualTime()
+        feedback = PitchFeedback(Plan(), clock=timer.clock)
+        feedback.update(math.radians(-1.111210), 0)
+        feedback.arm()
+        fixture = Path(__file__).parent / 'fixtures' / 'pitch_response_small.csv'
+        with fixture.open(newline='') as stream:
+            for row in csv.DictReader(stream):
+                completed = float(row['completed_elapsed_s'])
+                timer.now = completed - float(row['telemetry_age_s'])
+                feedback.update(math.radians(float(row['measured_pitch_deg'])), int(row['mode']))
+                timer.now = completed
+                feedback.observe(completed, math.radians(float(row['command_pitch_deg'])),
+                                 commanded_at=float(row['command_elapsed_s']))
+        feedback.finish()
+        self.assertTrue(feedback.confirmed)
+
+    def test_baseline_drift_alone_does_not_verify_motion(self):
+        timer = VirtualTime()
+        plan = Plan()
+        feedback = PitchFeedback(plan, clock=timer.clock)
+        feedback.update(0, 1)
+        feedback.arm()
+        with self.assertRaises(PerformanceError):
             for index in range(170):
                 timer.now = index / 10
-                feedback.update(math.radians(0.735 / 2) * math.sin(2 * math.pi * timer.now / 4), 1)
+                feedback.update(math.radians(timer.now * 0.1), 1)
                 feedback.observe(timer.now, plan.pitch_at(timer.now))
-                if 10 <= timer.now < 12:
-                    self.assertIn('startup check pending', feedback.status())
-        self.assertGreaterEqual(timer.now, 14)
         self.assertFalse(feedback.confirmed)
+
+    def test_tiny_periodic_noise_does_not_verify_motion(self):
+        timer = VirtualTime()
+        plan = Plan()
+        feedback = PitchFeedback(plan, clock=timer.clock)
+        feedback.update(0, 1)
+        feedback.arm()
+        with self.assertRaises(PerformanceError):
+            for index in range(170):
+                timer.now = index / 10
+                feedback.update(plan.pitch_at(timer.now) * 0.01, 1)
+                feedback.observe(timer.now, plan.pitch_at(timer.now))
+
+    def test_separated_test_allows_tenfold_command_without_clearance_limiter(self):
+        plan = Plan(duration=16, pitch_deg=15, clearance_cm=0, separated_test=True)
+        self.assertAlmostEqual(math.degrees(plan.amplitude), 15)
+        self.assertFalse(plan.summary()['clearance_limiter_enabled'])
+        self.assertIsNone(plan.summary()['measured_clearance_cm'])
+        self.assertEqual(plan.measured_pitch_limit_deg, 18)
+        with self.assertRaises(ValueError):
+            Plan(pitch_deg=15)
+        with self.assertRaises(ValueError):
+            Plan(pitch_deg=15.1, separated_test=True)
+        timer = VirtualTime()
+        sport = self.sport(timer)
+        feedback = PitchFeedback(plan, clock=timer.clock)
+        sport.Euler.side_effect = lambda roll, pitch, yaw: feedback.update(pitch * 0.9, 1) or 0
+        self.assertEqual(run(sport, plan, timer, clock=timer.clock, report=lambda message: None,
+                             feedback=feedback), 'completed')
+        self.assertTrue(feedback.confirmed)
+        sport.StopMove.assert_called_once()
+
+    def test_separated_test_stops_excessive_measured_pitch(self):
+        timer = VirtualTime()
+        feedback = PitchFeedback(Plan(pitch_deg=15, separated_test=True), clock=timer.clock)
+        feedback.update(0, 1)
+        feedback.arm()
+        feedback.update(math.radians(19), 1)
+        with self.assertRaisesRegex(PerformanceError, 'more than 18 degrees'):
+            feedback.observe(1, 0)
 
     def test_startup_grace_allows_response_to_settle(self):
         timer = VirtualTime()
@@ -292,6 +361,13 @@ class PerformanceTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertEqual(main(['--diagnostic', '--period', '20', '--dry-run']), 0)
         self.assertIn('"duration_seconds": 64', output.getvalue())
+
+    def test_separated_diagnostic_preview_preserves_large_amplitude(self):
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(main(['--diagnostic', '--separated-test', '--pitch-deg', '15', '--dry-run']), 0)
+        self.assertIn('"maximum_pitch_degrees": 15.0', output.getvalue())
+        self.assertIn('"clearance_limiter_enabled": false', output.getvalue())
+        self.assertIn('"duration_seconds": 16', output.getvalue())
 
     def test_cleanup_failure_is_not_reported_as_success(self):
         timer = VirtualTime()

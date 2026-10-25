@@ -176,7 +176,7 @@ pose. Change it for a different setup, for example:
 The planner reserves 5 cm, assumes torso points are within 75 cm of the pitch
 centre, and reduces the amplitude if the remaining gap requires it. At the
 default +/-1.5 degrees, the modelled point displacement is about 1.96 cm.
-Pitch is always capped at 2 degrees, duration at 600 seconds, and a gap of
+For the close-clearance setup, pitch is capped at 2 degrees, duration at 600 seconds, and a gap of
 5 cm or less is rejected. This is a planning estimate, not measured collision
 avoidance: balance corrections, body translation, legs and staging geometry
 are not modelled. Keep the **whole initial stand-up transition clear**, and
@@ -194,6 +194,44 @@ amplitude is not exposed by the SDK. This routine uses `StandUp` to prepare
 the robot and parameterized `Euler` pitch commands to construct the nodding
 motion. SDK acknowledgements alone do not establish that the body follows;
 the measured-pitch diagnostic below must be verified on the physical robot.
+
+#### Larger test with the robots separated
+
+For a rehearsal with the other robot and obstacles out of the motion area,
+`-SeparatedTest` explicitly bypasses the clearance calculation and allows a
+pitch command up to +/-15 degrees (ten times the original +/-1.5 command).
+The normal close-clearance settings remain the default. Preview offline:
+
+```powershell
+& .\scripts\Start-Go2Performance.ps1 -SeparatedTest -PitchDegrees 15 -Diagnostic -DryRun
+```
+
+After reconnecting and running `Set-Go2Ethernet.ps1`, launch the 16-second test:
+
+```powershell
+& .\scripts\Start-Go2Performance.ps1 -SeparatedTest -PitchDegrees 15 -Diagnostic
+```
+
+The summary shows `clearance_limiter_enabled: false`; `-ClearanceCm` is unused
+in this mode. The Euler pitch parameter reaches +/-0.262 radians, with the
+same four-second cycle and two-second fades. Actual body tilt is measured:
+the recorded small-command test had only about 9% of the commanded cyclic
+amplitude, so a larger command still needs physical verification. There is
+no automatic amplitude increase. The measured-pitch stop is the greater of
+3 degrees and 1.2 times the selected command amplitude (18 degrees for this
+15-degree test), relative to the initial measured pitch. Stale telemetry,
+damping, rejected SDK calls and lost response still stop the routine.
+
+Once the diagnostic and physical movement are satisfactory, the same separated
+setup can run for ten minutes with:
+
+```powershell
+& .\scripts\Start-Go2Performance.ps1 -SeparatedTest -PitchDegrees 15 -DurationSeconds 600
+```
+
+Press Ctrl+C in the launching terminal to cancel and request neutral posture
+and `StopMove`. Use the measured clearance setup again when positioning the
+robots close together.
 
 #### Diagnose accepted commands without visible movement
 
@@ -218,14 +256,19 @@ two-second startup fade, then uses two nod periods of measured pitch. If the
 initial check is inconclusive, it allows one further period for the response
 to settle (first check at 10 seconds, startup deadline at 14 seconds with the
 default four-second period). Once confirmed, a failed response check aborts
-immediately. The range threshold remains 0.750 degrees at the default pitch;
-the log reports the measured range, required range, correlation and sample
-count. Command and telemetry timestamps allow for up to one second of lag,
+immediately. Response detection removes linear settling drift, requires a
+correlation of at least 0.60 and at least 0.150 degrees of fitted cyclic
+peak-to-peak movement at the default command amplitude. For very small
+commands, that minimum reduces to half the command amplitude with a 0.050
+degree floor. It no longer assumes body tilt follows the command at a fixed
+gain. The log reports measured range, required cyclic range, correlation,
+command-to-body gain and sample count. Command and telemetry timestamps allow for up to one second of lag,
 even when SDK calls make the actual update rate slower than the nominal 10 Hz.
 Accepted commands without a measurable response abort with an explicit error.
-Stale telemetry, damping mode, or a measured change exceeding three degrees
-from the initial pitch also aborts. Commanded pitch and clearance limits are
-unchanged. These checks measure attitude, not distance to the other robot.
+Stale telemetry and damping mode also abort. A measured change exceeding
+three degrees from the initial pitch aborts in the close-clearance setup;
+the separated test uses the limit printed in its summary. These checks
+measure attitude, not distance to the other robot.
 
 Each live PowerShell launch saves a transcript in
 `.runtime/performance-YYYYMMDD-HHMMSS.log` and a matching `.csv` containing

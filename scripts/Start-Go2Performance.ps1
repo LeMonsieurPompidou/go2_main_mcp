@@ -6,7 +6,8 @@ param(
     [double]$PeriodSeconds = 4,
     [double]$DurationSeconds = 600,
     [switch]$DryRun,
-    [switch]$Diagnostic
+    [switch]$Diagnostic,
+    [switch]$SeparatedTest
 )
 
 $ErrorActionPreference = 'Stop'
@@ -19,6 +20,7 @@ $go2Arguments = @(
     '--duration', $DurationSeconds.ToString($go2Culture)
 )
 if ($Diagnostic) { $go2Arguments += '--diagnostic' }
+if ($SeparatedTest) { $go2Arguments += '--separated-test' }
 
 if ($DryRun) {
     Push-Location $go2Repository
