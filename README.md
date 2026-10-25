@@ -212,15 +212,27 @@ The change still needs physical verification on the connected robot.
 
 Both diagnostic and normal runs now require fresh `rt/sportmodestate`
 telemetry before movement. The diagnostic prints commanded pitch, measured
-IMU pitch and robot mode every second; normal runs print this every 15 seconds.
-After two nod periods, a moving window checks for sufficient measured pitch
-variation correlated with the commanded motion, allowing for response lag.
+IMU pitch and robot mode every second; normal runs also print every second
+until response is confirmed, then every 15 seconds. The check excludes the
+two-second startup fade, then uses two nod periods of measured pitch. If the
+initial check is inconclusive, it allows one further period for the response
+to settle (first check at 10 seconds, startup deadline at 14 seconds with the
+default four-second period). Once confirmed, a failed response check aborts
+immediately. The range threshold remains 0.750 degrees at the default pitch;
+the log reports the measured range, required range, correlation and sample
+count. Command and telemetry timestamps allow for up to one second of lag,
+even when SDK calls make the actual update rate slower than the nominal 10 Hz.
 Accepted commands without a measurable response abort with an explicit error.
 Stale telemetry, damping mode, or a measured change exceeding three degrees
 from the initial pitch also aborts. Commanded pitch and clearance limits are
 unchanged. These checks measure attitude, not distance to the other robot.
 
-Each live launch saves a transcript in `.runtime/performance-YYYYMMDD-HHMMSS.log`.
+Each live PowerShell launch saves a transcript in
+`.runtime/performance-YYYYMMDD-HHMMSS.log` and a matching `.csv` containing
+command/update times, telemetry age, commanded pitch, measured pitch and mode.
+These traces distinguish a startup transient from a sustained but small
+response, slow SDK calls, or motion that stops. A native Linux launch can
+enable the same trace with `--trace-csv /path/to/trace.csv`.
 Preview the diagnostic without connecting or moving:
 
 ```powershell

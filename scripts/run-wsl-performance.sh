@@ -25,6 +25,9 @@ mountpoint -q "$go2_rootfs/dev" || mount --bind /dev "$go2_rootfs/dev"
 mountpoint -q "$go2_rootfs/proc" || mount -t proc proc "$go2_rootfs/proc"
 mkdir -p "$go2_rootfs/app/go2_performance"
 cp "$go2_repository"/go2_performance/*.py "$go2_rootfs/app/go2_performance/"
+# Persist traces beside the PowerShell transcript without exposing the whole repo.
+mkdir -p "$go2_repository/.runtime" "$go2_rootfs/app/performance-logs"
+mountpoint -q "$go2_rootfs/app/performance-logs" || mount --bind "$go2_repository/.runtime" "$go2_rootfs/app/performance-logs"
 
 exec chroot --userspec=1000:1000 "$go2_rootfs" /usr/bin/env \
     PYTHONUNBUFFERED=1 \

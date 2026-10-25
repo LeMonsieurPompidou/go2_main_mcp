@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import ipaddress
 import json
 import logging
+import math
 import os
 import signal
 import sys
 import threading
+import time
+from contextlib import ExitStack
 
 from .routine import Plan, run
 from .feedback import PitchFeedback
@@ -25,13 +29,15 @@ def main(argv=None) -> int:
     parser.add_argument("--address", default=os.getenv("GO2_NETWORK_ADDRESS", ""), help="local adapter IPv4 address, not robot IP")
     parser.add_argument("--dry-run", action="store_true", help="print the plan without loading the SDK or moving")
     parser.add_argument("--diagnostic", action="store_true", help="short feedback test, with pitch measurements every second")
+    parser.add_argument("--trace-csv", help="save timestamped commands and measured pitch for diagnosis")
     args = parser.parse_args(argv)
     try:
         plan = Plan(args.duration, args.period, args.pitch_deg, args.clearance_cm)
         if args.diagnostic:
-            plan = Plan(min(plan.duration, max(16, 2 * plan.period + 2)), plan.period, plan.pitch_deg, plan.clearance_cm)
-            if plan.duration <= 2 * plan.period:
-                raise ValueError("diagnostic duration must allow more than two complete nod periods")
+            diagnostic_duration = max(16, 3 * plan.period + 4)
+            if plan.duration < diagnostic_duration:
+                raise ValueError(f"diagnostic duration must allow at least {diagnostic_duration:g} seconds")
+            plan = Plan(diagnostic_duration, plan.period, plan.pitch_deg, plan.clearance_cm)
         if args.address:
             ipaddress.IPv4Address(args.address)
     except ValueError as exc:
@@ -52,6 +58,7 @@ def main(argv=None) -> int:
 
     previous_handlers = {}
     subscriber = None
+    files = ExitStack()
     for sig in (signal.SIGINT, signal.SIGTERM):
         previous_handlers[sig] = signal.signal(sig, request_stop)
     try:
@@ -82,11 +89,27 @@ def main(argv=None) -> int:
         sport = SportClient()
         sport.SetTimeout(3.0)
         sport.Init()
+        trace = None
+        if args.trace_csv:
+            trace_file = files.enter_context(open(args.trace_csv, "w", newline="", encoding="utf-8"))
+            writer = csv.writer(trace_file)
+            writer.writerow(("command_elapsed_s", "completed_elapsed_s", "telemetry_age_s", "command_pitch_deg", "measured_pitch_deg", "mode"))
+
+            def trace(commanded_at, completed_at, pitch, reading):
+                writer.writerow((
+                    f"{commanded_at:.6f}", f"{completed_at:.6f}",
+                    f"{time.monotonic() - reading.timestamp:.6f}",
+                    f"{math.degrees(pitch):.6f}", f"{math.degrees(reading.pitch):.6f}", reading.mode,
+                ))
+                trace_file.flush()
+
+            print(f"Timestamped pitch trace: {args.trace_csv}", flush=True)
         result = run(
             sport, plan, cancelled,
             report=lambda message: print(message, flush=True),
             feedback=feedback,
             progress_interval=1.0 if args.diagnostic else 15.0,
+            trace=trace,
         )
         print(f"Performance {result}.", flush=True)
         return 0 if result == "completed" else 130
@@ -96,6 +119,7 @@ def main(argv=None) -> int:
         print(f"ERROR: {exc}", file=sys.stderr, flush=True)
         return 1
     finally:
+        files.close()
         if subscriber is not None:
             subscriber.Close()
         for sig, handler in previous_handlers.items():

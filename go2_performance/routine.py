@@ -97,6 +97,7 @@ def run(
     report: Callable[[str], None] = print,
     feedback=None,
     progress_interval: float = 15.0,
+    trace=None,
 ) -> str:
     """Execute once; never retry a rejected motion or issue locomotion commands.
 
@@ -118,10 +119,10 @@ def run(
         if cancelled.is_set():
             return "cancelled"
         require_success(sport.Euler(0.0, 0.0, 0.0), "neutral pose")
-        if feedback is not None:
-            feedback.arm()
-
         started = clock()
+        if feedback is not None:
+            feedback.arm(started_at=started)
+
         progress_at = 0.0
         report("Nodding started. Ctrl+C requests a stop; physical remote controls remain enabled.")
         while not cancelled.is_set():
@@ -138,11 +139,17 @@ def run(
             # every Euler setpoint, not just once at startup.
             require_success(sport.BalanceStand(), "apply standing pitch")
             if feedback is not None:
-                feedback.observe(elapsed, pitch)
+                # Trace even an update that causes the feedback check to abort.
+                if trace is not None:
+                    reading = feedback.latest()
+                    trace(elapsed, clock() - started, pitch, reading)
+                feedback.observe(clock() - started, pitch, commanded_at=elapsed)
+            # Preserve startup evidence even when validation stops before 15 s.
+            interval = min(progress_interval, 1.0) if feedback is not None and not feedback.confirmed else progress_interval
             if elapsed >= progress_at:
                 detail = f" | {feedback.status()}" if feedback is not None else ""
                 report(f"Performance: {elapsed:.0f}/{plan.duration:.0f} seconds{detail}")
-                progress_at += progress_interval
+                progress_at = elapsed + interval
             remaining = plan.duration - (clock() - started)
             if remaining > 0:
                 cancelled.wait(min(plan.SAMPLE_INTERVAL, remaining))

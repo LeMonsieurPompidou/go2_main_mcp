@@ -141,7 +141,7 @@ class PerformanceTests(unittest.TestCase):
         sport.Euler.side_effect = lambda *angles: feedback.update(0, 1) or 0
         with self.assertRaisesRegex(PerformanceError, 'no sufficient physical pitch response'):
             run(sport, plan, timer, clock=timer.clock, report=lambda message: None, feedback=feedback)
-        self.assertLess(timer.now, 14)
+        self.assertLess(timer.now, 20)  # Fade + two periods, then one startup grace period.
         self.assertEqual(sport.Euler.call_args.args, (0.0, 0.0, 0.0))
         sport.StopMove.assert_called_once()
 
@@ -166,7 +166,7 @@ class PerformanceTests(unittest.TestCase):
             command = plan.pitch_at(timer.now)
             feedback.update(command * 0.9, 1)
             feedback.observe(timer.now, command)
-            self.assertLessEqual(len(feedback.commands), 82)
+            self.assertLessEqual(len(feedback.commands), 94)
         feedback.finish()
         self.assertTrue(feedback.confirmed)
 
@@ -188,13 +188,13 @@ class PerformanceTests(unittest.TestCase):
         feedback.update(0, 1)
         feedback.arm()
         with self.assertRaisesRegex(PerformanceError, 'no sufficient physical pitch response'):
-            for index in range(200):
+            for index in range(300):
                 timer.now = index / 10
                 command = plan.pitch_at(timer.now)
-                feedback.update(command if timer.now < 9 else 0, 1)
+                feedback.update(command if timer.now < 12 else 0, 1)
                 feedback.observe(timer.now, command)
         self.assertTrue(feedback.confirmed)  # Initial movement was verified first.
-        self.assertLess(timer.now, 19)
+        self.assertLess(timer.now, 23)
 
     def test_unrelated_pitch_variation_is_not_accepted_as_tracking(self):
         timer = VirtualTime()
@@ -203,10 +203,76 @@ class PerformanceTests(unittest.TestCase):
         feedback.update(0, 1)
         feedback.arm()
         with self.assertRaisesRegex(PerformanceError, 'no sufficient physical pitch response'):
-            for index in range(100):
+            for index in range(160):
                 timer.now = index / 10
                 feedback.update(plan.amplitude * (-1 if index % 2 else 1), 1)
                 feedback.observe(timer.now, plan.pitch_at(timer.now))
+
+    def test_borderline_range_is_reported_and_not_silently_accepted(self):
+        timer = VirtualTime()
+        plan = Plan()
+        feedback = PitchFeedback(plan, clock=timer.clock)
+        feedback.update(0, 1)
+        feedback.arm()
+        with self.assertRaisesRegex(PerformanceError, r'range=0.735deg required=0.750deg'):
+            for index in range(170):
+                timer.now = index / 10
+                feedback.update(math.radians(0.735 / 2) * math.sin(2 * math.pi * timer.now / 4), 1)
+                feedback.observe(timer.now, plan.pitch_at(timer.now))
+                if 10 <= timer.now < 12:
+                    self.assertIn('startup check pending', feedback.status())
+        self.assertGreaterEqual(timer.now, 14)
+        self.assertFalse(feedback.confirmed)
+
+    def test_startup_grace_allows_response_to_settle(self):
+        timer = VirtualTime()
+        plan = Plan()
+        feedback = PitchFeedback(plan, clock=timer.clock)
+        feedback.update(0, 1)
+        feedback.arm()
+        for index in range(151):
+            timer.now = index / 10
+            command = plan.pitch_at(timer.now)
+            feedback.update(command * (0.1 if timer.now <= 10 else 0.9), 1)
+            feedback.observe(timer.now, command)
+        self.assertTrue(feedback.confirmed)
+
+    def test_timestamp_alignment_handles_irregular_sdk_cadence_and_lag(self):
+        timer = VirtualTime()
+        plan = Plan()
+        feedback = PitchFeedback(plan, clock=timer.clock)
+        feedback.update(0, 1)
+        feedback.arm()
+        index = 0
+        while timer.now < 20:
+            # The robot applies a previous command, 0.7 s later. Calls take
+            # variable amounts of time, so sample-index lags are inaccurate.
+            command = plan.pitch_at(timer.now)
+            previous = next((value for at, value in reversed(list(zip(feedback.times, feedback.commands)))
+                             if at <= timer.now - 0.7), 0)
+            feedback.update(previous * 0.9, 1)
+            feedback.observe(timer.now, command)
+            timer.now += (0.1, 0.35, 0.15, 0.4)[index % 4]
+            index += 1
+        self.assertTrue(feedback.confirmed)
+
+    def test_trace_retains_failing_update_and_sdk_call_latency(self):
+        timer = VirtualTime()
+        plan = Plan()
+        feedback = PitchFeedback(plan, clock=timer.clock)
+        sport = self.sport(timer)
+        def update(roll, pitch, yaw):
+            timer.wait(0.15)
+            feedback.update(0, 1)
+            return 0
+        sport.Euler.side_effect = update
+        rows = []
+        with self.assertRaises(PerformanceError):
+            run(sport, plan, timer, clock=timer.clock, report=lambda message: None,
+                feedback=feedback, trace=lambda *row: rows.append(row))
+        self.assertGreater(rows[-1][1], rows[-1][0])
+        self.assertGreaterEqual(rows[-1][1], 14)
+        sport.StopMove.assert_called_once()
 
     def test_excessive_measured_pitch_stops_test(self):
         timer = VirtualTime()
@@ -221,6 +287,11 @@ class PerformanceTests(unittest.TestCase):
         with patch.dict(sys.modules, {'unitree_sdk2py': None}), contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertEqual(main(['--diagnostic', '--dry-run']), 0)
         self.assertIn('"duration_seconds": 16', output.getvalue())
+
+    def test_slow_diagnostic_allows_startup_validation_and_fade_out(self):
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(main(['--diagnostic', '--period', '20', '--dry-run']), 0)
+        self.assertIn('"duration_seconds": 64', output.getvalue())
 
     def test_cleanup_failure_is_not_reported_as_success(self):
         timer = VirtualTime()

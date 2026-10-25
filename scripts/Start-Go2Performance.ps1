@@ -37,9 +37,13 @@ if ($LASTEXITCODE -ne 0) { throw 'Unable to resolve the WSL launcher path' }
 $go2LogDirectory = Join-Path $go2Repository '.runtime'
 New-Item -ItemType Directory -Path $go2LogDirectory -Force | Out-Null
 $go2LogPath = Join-Path $go2LogDirectory ("performance-" + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log')
+$go2TracePath = [System.IO.Path]::ChangeExtension($go2LogPath, '.csv')
+$go2LinuxTracePath = '/app/performance-logs/' + [System.IO.Path]::GetFileName($go2TracePath)
+$go2Arguments += @('--trace-csv', $go2LinuxTracePath)
 Start-Transcript -Path $go2LogPath | Out-Null
 try {
     Write-Output "Test log: $go2LogPath"
+    Write-Output "Pitch trace: $go2TracePath"
     & wsl.exe -d Ubuntu-24.04 -u root --exec /bin/sh $go2LinuxLauncher @go2Arguments
     if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 130) {
         throw "Performance exited with code $LASTEXITCODE. Check the SDK result above."
