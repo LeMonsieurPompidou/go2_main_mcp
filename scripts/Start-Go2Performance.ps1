@@ -46,6 +46,7 @@ Start-Transcript -Path $go2LogPath | Out-Null
 try {
     Write-Output "Test log: $go2LogPath"
     Write-Output "Pitch trace: $go2TracePath"
+    Write-Output "SDK replies: $([System.IO.Path]::ChangeExtension($go2LogPath, '.sdk.jsonl'))"
     & wsl.exe -d Ubuntu-24.04 -u root --exec /bin/sh $go2LinuxLauncher @go2Arguments
     if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 130) {
         throw "Performance exited with code $LASTEXITCODE. Check the SDK result above."

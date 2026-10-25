@@ -13,6 +13,13 @@ class PerformanceError(RuntimeError):
     pass
 
 
+class SdkCallError(PerformanceError):
+    def __init__(self, code: int, operation: str):
+        self.code = code
+        self.operation = operation
+        super().__init__(f"{operation} failed with SDK code {code}; routine aborted")
+
+
 class SportControl(Protocol):
     def StandUp(self) -> int: ...
     def BalanceStand(self) -> int: ...
@@ -97,7 +104,7 @@ class Plan:
 
 def require_success(code: int, operation: str) -> None:
     if code != 0:
-        raise PerformanceError(f"{operation} failed with SDK code {code}; routine aborted")
+        raise SdkCallError(code, operation)
 
 
 def run(
@@ -121,6 +128,7 @@ def run(
 
     balancing = False
     failed = False
+    sdk_rejected = False
     try:
         report("Standing up; keep the entire standing transition clear.")
         require_success(sport.StandUp(), "StandUp")
@@ -146,7 +154,7 @@ def run(
             if feedback is not None:
                 feedback.latest()  # Do not send more motion using stale telemetry.
             pitch = plan.pitch_at(elapsed)
-            require_success(sport.Euler(0.0, pitch, 0.0), "pitch update")
+            require_success(sport.Euler(0.0, pitch, 0.0), f"pitch update at {elapsed:.3f}s, command={math.degrees(pitch):+.3f}deg")
             # Unitree's standing-attitude example applies BalanceStand after
             # every Euler setpoint, not just once at startup.
             require_success(sport.BalanceStand(), "apply standing pitch")
@@ -166,18 +174,23 @@ def run(
             if remaining > 0:
                 cancelled.wait(min(plan.SAMPLE_INTERVAL, remaining))
         return "cancelled"
-    except BaseException:
+    except BaseException as exc:
         failed = True
+        sdk_rejected = isinstance(exc, SdkCallError)
         raise
     finally:
         cleanup_errors = []
         operations = []
-        if balancing:
+        if sdk_rejected:
+            report("SDK rejected a command; requesting StopMove without resending Euler.")
+        if balancing and not sdk_rejected:
             operations.append(("neutral pose", lambda: sport.Euler(0.0, 0.0, 0.0)))
         operations.append(("StopMove", sport.StopMove))
         for name, operation in operations:
             try:
                 require_success(operation(), name)
+                if name == "StopMove":
+                    report("StopMove acknowledged by SDK (code 0).")
             except Exception as exc:
                 cleanup_errors.append(str(exc))
         if cleanup_errors:

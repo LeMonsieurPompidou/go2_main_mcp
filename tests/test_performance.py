@@ -109,12 +109,40 @@ class PerformanceTests(unittest.TestCase):
     def test_rejected_pitch_aborts_without_retrying_motion(self):
         timer = VirtualTime()
         sport = self.sport(timer)
-        sport.Euler.side_effect = [0, 3104, 0]
+        sport.Euler.side_effect = [0, 3104]
         with self.assertRaisesRegex(PerformanceError, '3104'):
             run(sport, Plan(), timer, clock=timer.clock, report=lambda message: None)
-        self.assertEqual(sport.Euler.call_count, 3)  # readiness, failed update, neutral cleanup
+        self.assertEqual(sport.Euler.call_count, 2)  # readiness, failed update; no Euler retry
         sport.StopMove.assert_called_once()
         self.assertEqual(timer.now, Plan.SETTLE_SECONDS)
+
+    def test_robot_401001_aborts_without_retry_and_records_stop_acknowledgement(self):
+        timer = VirtualTime()
+        sport = self.sport(timer)
+        rejected = []
+        def update(roll, pitch, yaw):
+            if timer.now >= Plan.SETTLE_SECONDS + 3.1:
+                rejected.append(pitch)
+                return 401001
+            return 0
+        sport.Euler.side_effect = update
+        messages = []
+        with self.assertRaisesRegex(PerformanceError, r'pitch update at .*command=.*401001'):
+            run(sport, Plan(duration=16, pitch_deg=15, separated_test=True), timer,
+                clock=timer.clock, report=messages.append)
+        self.assertEqual(len(rejected), 1)
+        self.assertEqual(sport.mock_calls[-1][0], 'StopMove')
+        self.assertIn('StopMove acknowledged by SDK (code 0).', messages)
+
+    def test_stop_failure_preserves_original_sdk_refusal(self):
+        timer = VirtualTime()
+        sport = self.sport(timer)
+        sport.Euler.side_effect = [0, 401001]
+        sport.StopMove.return_value = 3104
+        messages = []
+        with self.assertRaisesRegex(PerformanceError, '401001'):
+            run(sport, Plan(), timer, clock=timer.clock, report=messages.append)
+        self.assertTrue(any('Cleanup not confirmed' in message and '3104' in message for message in messages))
 
     def test_failed_stand_never_attempts_balance_or_pitch(self):
         timer = VirtualTime()
@@ -181,6 +209,14 @@ class PerformanceTests(unittest.TestCase):
             feedback.latest()
         feedback.update(0, 7)
         with self.assertRaisesRegex(PerformanceError, 'damping'):
+            feedback.latest()
+
+    def test_reported_robot_error_is_logged_and_rejected(self):
+        timer = VirtualTime()
+        feedback = PitchFeedback(Plan(), clock=timer.clock)
+        feedback.update(0, 0, 0x10)
+        self.assertEqual(feedback.snapshot().error_code, 0x10)
+        with self.assertRaisesRegex(PerformanceError, r'error_code=16 \(0x00000010\)'):
             feedback.latest()
 
     def test_motion_loss_after_initial_response_is_detected(self):

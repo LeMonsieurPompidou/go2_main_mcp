@@ -16,6 +16,7 @@ class Reading:
     timestamp: float
     pitch: float
     mode: int
+    error_code: int = 0
 
 
 class PitchFeedback:
@@ -38,20 +39,25 @@ class PitchFeedback:
         self.last_command = 0.0
         self.last_reading: Reading | None = None
 
-    def update(self, pitch: float, mode: int):
+    def update(self, pitch: float, mode: int, error_code: int = 0):
         if not math.isfinite(pitch):
             return
         with self.lock:
-            self.reading = Reading(self.clock(), pitch, int(mode))
+            self.reading = Reading(self.clock(), pitch, int(mode), int(error_code))
         self.ready.set()
 
-    def latest(self) -> Reading:
+    def snapshot(self) -> Reading | None:
         with self.lock:
-            reading = self.reading
+            return self.reading
+
+    def latest(self) -> Reading:
+        reading = self.snapshot()
         if reading is None or self.clock() - reading.timestamp > 1.0:
             raise PerformanceError("Robot pitch telemetry is missing or stale; routine stopped")
         if reading.mode == 7:
             raise PerformanceError("Robot entered damping mode; routine stopped")
+        if reading.error_code:
+            raise PerformanceError(f"Robot telemetry reports error_code={reading.error_code} (0x{reading.error_code:08x}); routine stopped")
         return reading
 
     def arm(self, *, started_at=None):
@@ -167,6 +173,6 @@ class PitchFeedback:
         reading = self.last_reading or self.latest()
         return (
             f"command={math.degrees(self.last_command):+.3f}deg "
-            f"measured={math.degrees(reading.pitch):+.3f}deg mode={reading.mode} "
+            f"measured={math.degrees(reading.pitch):+.3f}deg mode={reading.mode} error_code={reading.error_code} "
             f"response={'measured' if self.confirmed else 'unconfirmed'} {self.last_check}"
         )

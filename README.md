@@ -199,34 +199,41 @@ the measured-pitch diagnostic below must be verified on the physical robot.
 
 For a rehearsal with the other robot and obstacles out of the motion area,
 `-SeparatedTest` explicitly bypasses the clearance calculation and allows a
-pitch command up to +/-15 degrees (ten times the original +/-1.5 command).
+pitch command up to +/-15 degrees. The recorded +/-15-degree, four-second
+test produced substantial measured motion, then the robot rejected Euler
+with code 401001; a subsequent neutral Euler request was rejected too.
+The code's meaning is not defined in the installed SDK or the public error
+header checked during diagnosis. Do not assume it is an angle-range error.
+The next diagnostic uses +/-6-degree commands and a slower eight-second cycle.
 The normal close-clearance settings remain the default. Preview offline:
 
 ```powershell
-& .\scripts\Start-Go2Performance.ps1 -SeparatedTest -PitchDegrees 15 -Diagnostic -DryRun
+& .\scripts\Start-Go2Performance.ps1 -SeparatedTest -PitchDegrees 6 -PeriodSeconds 8 -Diagnostic -DryRun
 ```
 
-After reconnecting and running `Set-Go2Ethernet.ps1`, launch the 16-second test:
+After reconnecting and running `Set-Go2Ethernet.ps1`, launch the 28-second test:
 
 ```powershell
-& .\scripts\Start-Go2Performance.ps1 -SeparatedTest -PitchDegrees 15 -Diagnostic
+& .\scripts\Start-Go2Performance.ps1 -SeparatedTest -PitchDegrees 6 -PeriodSeconds 8 -Diagnostic
 ```
 
 The summary shows `clearance_limiter_enabled: false`; `-ClearanceCm` is unused
-in this mode. The Euler pitch parameter reaches +/-0.262 radians, with the
-same four-second cycle and two-second fades. Actual body tilt is measured:
-the recorded small-command test had only about 9% of the commanded cyclic
-amplitude, so a larger command still needs physical verification. There is
-no automatic amplitude increase. The measured-pitch stop is the greater of
+in this mode. This diagnostic's Euler pitch parameter reaches +/-0.105
+radians, with an eight-second cycle and two-second fades. Actual body tilt is
+measured. The small-command test had about 9% of the commanded cyclic
+amplitude, while the larger test had a much stronger response; command-to-body
+gain is not a calibration that can be extrapolated between amplitudes. There
+is no automatic amplitude increase or retry after a rejected SDK call.
+The measured-pitch stop is the greater of
 3 degrees and 1.2 times the selected command amplitude (18 degrees for this
-15-degree test), relative to the initial measured pitch. Stale telemetry,
+15-degree command; 7.2 degrees for the six-degree diagnostic), relative to the initial measured pitch. Stale telemetry,
 damping, rejected SDK calls and lost response still stop the routine.
 
 Once the diagnostic and physical movement are satisfactory, the same separated
 setup can run for ten minutes with:
 
 ```powershell
-& .\scripts\Start-Go2Performance.ps1 -SeparatedTest -PitchDegrees 15 -DurationSeconds 600
+& .\scripts\Start-Go2Performance.ps1 -SeparatedTest -PitchDegrees 6 -PeriodSeconds 8 -DurationSeconds 600
 ```
 
 Press Ctrl+C in the launching terminal to cancel and request neutral posture
@@ -273,6 +280,13 @@ measure attitude, not distance to the other robot.
 Each live PowerShell launch saves a transcript in
 `.runtime/performance-YYYYMMDD-HHMMSS.log` and a matching `.csv` containing
 command/update times, telemetry age, commanded pitch, measured pitch and mode.
+Robot `error_code` flags are included and nonzero flags abort the routine.
+A matching `.sdk.jsonl` records every SDK call's API ID, exact parameters,
+return code, response body, call duration and latest robot state, including
+failed calls and `StopMove`. After SDK rejection, cleanup requests `StopMove`
+without resending Euler or forcing a recovery/mode change. Its acknowledgement
+or failure is printed explicitly. A successful StopMove reply is an SDK
+acknowledgement, not independent confirmation of the physical robot's state.
 These traces distinguish a startup transient from a sustained but small
 response, slow SDK calls, or motion that stops. A native Linux launch can
 enable the same trace with `--trace-csv /path/to/trace.csv`.

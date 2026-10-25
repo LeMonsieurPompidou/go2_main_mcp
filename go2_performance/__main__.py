@@ -14,9 +14,11 @@ import sys
 import threading
 import time
 from contextlib import ExitStack
+from pathlib import Path
 
 from .routine import Plan, run
 from .feedback import PitchFeedback
+from .sdk_trace import jsonl_recorder, recorded_client
 
 
 def main(argv=None) -> int:
@@ -82,7 +84,7 @@ def main(argv=None) -> int:
         ChannelFactoryInitialize(0, args.interface)
         feedback = PitchFeedback(plan)
         subscriber = ChannelSubscriber('rt/sportmodestate', SportModeState_)
-        subscriber.Init(lambda state: feedback.update(state.imu_state.rpy[1], state.mode), 20)
+        subscriber.Init(lambda state: feedback.update(state.imu_state.rpy[1], state.mode, state.error_code), 20)
         print("Waiting for fresh robot pitch telemetry before starting movement...", flush=True)
         for _ in range(50):
             if cancelled.is_set():
@@ -90,20 +92,27 @@ def main(argv=None) -> int:
             if feedback.ready.wait(0.1):
                 break
         feedback.latest()
-        sport = SportClient()
+        if args.trace_csv:
+            sdk_trace_path = Path(args.trace_csv).with_suffix('.sdk.jsonl')
+            sdk_trace_file = files.enter_context(open(sdk_trace_path, 'w', encoding='utf-8'))
+            record_sdk = jsonl_recorder(sdk_trace_file)
+            print(f"SDK request/reply trace: {sdk_trace_path}", flush=True)
+        else:
+            record_sdk = lambda event: print("SDK " + json.dumps(event), flush=True) if event.get('code', 0) else None
+        sport = recorded_client(SportClient, record_sdk, feedback)
         sport.SetTimeout(3.0)
         sport.Init()
         trace = None
         if args.trace_csv:
             trace_file = files.enter_context(open(args.trace_csv, "w", newline="", encoding="utf-8"))
             writer = csv.writer(trace_file)
-            writer.writerow(("command_elapsed_s", "completed_elapsed_s", "telemetry_age_s", "command_pitch_deg", "measured_pitch_deg", "mode"))
+            writer.writerow(("command_elapsed_s", "completed_elapsed_s", "telemetry_age_s", "command_pitch_deg", "measured_pitch_deg", "mode", "error_code"))
 
             def trace(commanded_at, completed_at, pitch, reading):
                 writer.writerow((
                     f"{commanded_at:.6f}", f"{completed_at:.6f}",
                     f"{time.monotonic() - reading.timestamp:.6f}",
-                    f"{math.degrees(pitch):.6f}", f"{math.degrees(reading.pitch):.6f}", reading.mode,
+                    f"{math.degrees(pitch):.6f}", f"{math.degrees(reading.pitch):.6f}", reading.mode, reading.error_code,
                 ))
                 trace_file.flush()
 
